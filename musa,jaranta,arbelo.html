@@ -1,0 +1,200 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Voting&Polling System</title>
+  <style>
+    body{font-family: Arial, Helvetica, sans-serif; padding:20px; max-width:800px; margin:auto}
+    h3{margin-top:0}
+    input[type="text"], input[type="number"], select, textarea{width:100%; padding:8px; margin:6px 0 12px; box-sizing:border-box}
+    button{padding:8px 12px; margin-right:8px}
+    .poll{border:1px solid #ddd; padding:10px; margin-bottom:10px; border-radius:6px}
+    .muted{color:#666; font-size:13px}
+    .results-bar{background:#eee; height:14px; border-radius:8px; overflow:hidden; margin-top:6px}
+    .results-fill{background:#2F80ED; height:100%}
+  </style>
+</head>
+<body>
+  <h3>Simple Polling System</h3>
+
+  <form id="pollForm" onsubmit="return createPoll()">
+    <label>Poll Title:</label><br>
+    <input type="text" id="pollTitle" required placeholder="e.g., Choose new staff shirt color">
+
+    <label>Options (separate by comma):</label><br>
+    <input type="text" id="pollOptions" required placeholder="e.g., Blue, Black, White">
+
+    <label>Start Date (optional):</label><br>
+    <input type="date" id="startDate">
+
+    <label>End Date (optional):</label><br>
+    <input type="date" id="endDate">
+
+    <button type="submit">Create Poll</button>
+    <button type="button" onclick="clearForm()">Clear</button>
+  </form>
+
+  <hr>
+
+  <h4>Active Polls</h4>
+  <div id="pollList"></div>
+
+  <hr>
+
+  <h4>Quick Notes</h4>
+  <p class="muted">Votes are stored locally in your browser. To reset, clear site data or run clearAllPolls().</p>
+
+  <script>
+    const STORAGE_KEY = 'simple_polls_v1';
+
+    function uid(prefix='id'){ return prefix + '_' + Math.random().toString(36).slice(2,9); }
+
+    function loadPolls(){
+      try {
+        return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+      } catch(e){ return []; }
+    }
+
+    function savePolls(polls){
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(polls));
+    }
+
+    function createPoll(){
+      const title = document.getElementById('pollTitle').value.trim();
+      const optsRaw = document.getElementById('pollOptions').value.trim();
+      const sd = document.getElementById('startDate').value || null;
+      const ed = document.getElementById('endDate').value || null;
+
+      if(!title || !optsRaw){ alert('Please enter a title and at least two options.'); return false; }
+
+      const opts = optsRaw.split(',').map(s=>s.trim()).filter(Boolean);
+      const uniq = [...new Set(opts.map(s=>s.toLowerCase()))];
+      if(opts.length < 2 || uniq.length !== opts.length){ alert('Provide at least 2 unique options.'); return false; }
+      if(sd && ed && sd > ed){ alert('Start date must be before or equal to end date.'); return false; }
+
+      const polls = loadPolls();
+      const poll = {
+        id: uid('poll'),
+        title,
+        startDate: sd,
+        endDate: ed,
+        options: opts.map(o => ({ id: uid('opt'), text: o, votes: 0 })),
+        createdAt: new Date().toISOString()
+      };
+      polls.unshift(poll);
+      savePolls(polls);
+      renderPolls();
+      clearForm();
+      return false;
+    }
+
+    function clearForm(){
+      document.getElementById('pollTitle').value = '';
+      document.getElementById('pollOptions').value = '';
+      document.getElementById('startDate').value = '';
+      document.getElementById('endDate').value = '';
+    }
+
+    function isActive(p){
+      const today = new Date().toISOString().slice(0,10);
+      if(p.startDate && today < p.startDate) return false;
+      if(p.endDate && today > p.endDate) return false;
+      return true;
+    }
+
+    function renderPolls(){
+      const container = document.getElementById('pollList');
+      container.innerHTML = '';
+      const polls = loadPolls();
+      if(!polls.length){ container.innerHTML = '<p class="muted">No polls yet.</p>'; return; }
+
+      polls.forEach(p => {
+        const div = document.createElement('div'); div.className = 'poll';
+        const title = document.createElement('div'); title.style.fontWeight='700'; title.textContent = p.title;
+        const meta = document.createElement('div'); meta.className='muted';
+        meta.textContent = (isActive(p) ? 'Active' : 'Inactive') + ' • ' + (p.startDate||'') + (p.startDate && p.endDate ? ' — ' + p.endDate : '') + ' • ' + totalVotes(p) + ' votes';
+        div.appendChild(title); div.appendChild(meta);
+
+        const form = document.createElement('div'); form.style.marginTop='8px';
+        p.options.forEach(opt => {
+          const row = document.createElement('div'); row.style.display='flex'; row.style.alignItems='center'; row.style.justifyContent='space-between';
+          const left = document.createElement('div');
+          const radio = document.createElement('input'); radio.type='radio'; radio.name = 'vote_' + p.id; radio.value = opt.id;
+          left.appendChild(radio);
+          const lbl = document.createElement('span'); lbl.textContent = ' ' + opt.text; left.appendChild(lbl);
+          row.appendChild(left);
+
+          const right = document.createElement('div'); right.style.width='45%'; right.style.textAlign='right';
+          const vcount = document.createElement('span'); vcount.className='muted'; vcount.textContent = opt.votes + ' votes';
+          right.appendChild(vcount);
+          row.appendChild(right);
+
+          form.appendChild(row);
+        });
+
+        const btnRow = document.createElement('div'); btnRow.style.marginTop='8px';
+        const voteBtn = document.createElement('button'); voteBtn.textContent='Vote'; voteBtn.onclick = () => castVote(p.id);
+        const resultsBtn = document.createElement('button'); resultsBtn.textContent='Show Results'; resultsBtn.onclick = () => showResults(p.id);
+        const delBtn = document.createElement('button'); delBtn.textContent='Delete'; delBtn.style.background='#EB5757'; delBtn.style.color='#fff'; delBtn.onclick = () => deletePoll(p.id);
+        btnRow.appendChild(voteBtn); btnRow.appendChild(resultsBtn); btnRow.appendChild(delBtn);
+
+        div.appendChild(form); div.appendChild(btnRow);
+        container.appendChild(div);
+      });
+    }
+
+    function totalVotes(p){
+      return p.options.reduce((s,o)=>s+o.votes,0);
+    }
+
+    function castVote(pollId){
+      const poll = loadPolls().find(x=>x.id===pollId);
+      if(!poll) return alert('Poll not found');
+      const radios = document.getElementsByName('vote_' + pollId);
+      let selected = null;
+      for(const r of radios) if(r.checked) selected = r.value;
+      if(!selected) return alert('Please select an option to vote.');
+      const polls = loadPolls();
+      const p = polls.find(x=>x.id===pollId);
+      const opt = p.options.find(o=>o.id === selected);
+      opt.votes++;
+      savePolls(polls);
+      renderPolls();
+      alert('Thank you for voting!');
+    }
+
+    function showResults(pollId){
+      const p = loadPolls().find(x=>x.id===pollId);
+      if(!p) return alert('Poll not found');
+      const total = totalVotes(p) || 0;
+      let msg = p.title + '\\n\\n';
+      p.options.forEach(o => {
+        const pct = total ? Math.round((o.votes/total)*100) : 0;
+        msg += ${o.text}: ${o.votes} votes (${pct}%)\\n;
+      });
+      alert(msg);
+    }
+
+    function deletePoll(pollId){
+      if(!confirm('Delete this poll?')) return;
+      let polls = loadPolls();
+      polls = polls.filter(p=>p.id !== pollId);
+      savePolls(polls);
+      renderPolls();
+    }
+
+    function clearAllPolls(){ localStorage.removeItem(STORAGE_KEY); renderPolls(); }
+
+    (function init(){
+      if(!localStorage.getItem(STORAGE_KEY)){
+        const sample = [
+          { id: uid('poll'), title:'New staff shirt color', startDate:null, endDate:null,
+            options:[{id:uid('opt'),text:'Blue',votes:2},{id:uid('opt'),text:'Black',votes:3}] , createdAt:new Date().toISOString() }
+        ];
+        savePolls(sample);
+      }
+      renderPolls();
+    })();
+  </script>
+</body>
+</html>
